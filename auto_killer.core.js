@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const SCRIPT_VERSION = '2.23.11F';
+  const SCRIPT_VERSION = '2.23.12F';
   const GPT_URL = 'https://chatgpt.com/g/g-6a1099bd986881918e0c582d35aafb1d-yeogbyeongkilreo';
   const PANEL_ID = 'zk-tm-unified-panel-v4';
   const JOB_KEY = 'zk_current_job_v2';
@@ -1543,6 +1543,24 @@
         let attemptedOneClickId = '';
         window.addEventListener('__AUTO_KILLER_ONECLICK_RESPONSE__', async event => {
           const pending = event.detail;
+          if (applyingOneClick || !pending || !pending.id || pending.id === attemptedOneClickId) return;
+          if (pending.room !== location.href.split('#')[0]) return;
+          applyingOneClick = true;
+          attemptedOneClickId = pending.id;
+          try {
+            if (pending.type === 'summary') {
+              showSummaryResult(pending.text);
+              say('요약이 완료됐어요. 미리보기에서 복사할 수 있어요.');
+            } else {
+              await applyToZeta(pending.text, say, pending.type || 'review');
+            }
+          } finally {
+            applyingOneClick = false;
+          }
+        });
+        window.addEventListener('__AUTO_KILLER_ONECLICK_RESPONSE_JSON__', async event => {
+          let pending = null;
+          try { pending = JSON.parse(event.detail || 'null'); } catch (error) {}
           if (applyingOneClick || !pending || !pending.id || pending.id === attemptedOneClickId) return;
           if (pending.room !== location.href.split('#')[0]) return;
           applyingOneClick = true;

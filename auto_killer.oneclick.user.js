@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AUTO_KILLER OneClick Bridge (Firefox)
 // @namespace    local.zeta.gpt.oneclick
-// @version      2.23.11F
+// @version      2.23.12F
 // @description  Firefox에서 ZETA → 역병킬러 GPT → ZETA를 한 번의 작업 클릭으로 자동 왕복합니다.
 // @match        https://*.zeta-ai.io/*
 // @match        https://zeta-ai.io/*
@@ -22,7 +22,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.23.11F';
+  const VERSION = '2.23.12F';
   const CORE_URL = 'https://ztcgh01.github.io/autokiller-test/auto_killer.core.js';
   const RESPONSE_KEY = 'zk_oneclick_response_v1';
   const SESSION_KEY = 'zk_oneclick_gpt_job_v1';
@@ -118,9 +118,25 @@
         if (!response?.id || response.id === lastResponseId) return;
         if (response.room !== location.href.split('#')[0]) return;
         lastResponseId = response.id;
-        const event = new pageWindow.CustomEvent('__AUTO_KILLER_ONECLICK_RESPONSE__', { detail: response });
-        pageWindow.dispatchEvent(event);
-        await sleep(250);
+
+        // GPT 쪽 Userscripts GM 저장소의 결과를, 페이지 realm에서 실행 중인
+        // AUTO_KILLER core가 실제로 읽는 localStorage 공유 키로 미러링한다.
+        // Firefox에서는 sandbox CustomEvent.detail 객체가 page realm과 안정적으로
+        // 공유되지 않을 수 있으므로, JSON 문자열 기반 localStorage를 주 경로로 쓴다.
+        pageWindow.localStorage.setItem(
+          'zk_bookmarklet_zk_response_v2',
+          JSON.stringify(response)
+        );
+
+        // core는 1초 폴링 + focus/visibilitychange로 위 키를 자동 적용한다.
+        // event는 같은 realm에서 읽기 쉬운 JSON 문자열만 보조 신호로 보낸다.
+        try {
+          pageWindow.dispatchEvent(new pageWindow.CustomEvent(
+            '__AUTO_KILLER_ONECLICK_RESPONSE_JSON__',
+            { detail: JSON.stringify(response) }
+          ));
+        } catch (error) {}
+
         await gmDelete(RESPONSE_KEY);
       } catch (error) {
         console.error('[AUTO_KILLER OneClick] ZETA 결과 수신 실패', error);
