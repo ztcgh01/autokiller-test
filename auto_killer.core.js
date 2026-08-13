@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const SCRIPT_VERSION = '2.23.10H1';
+  const SCRIPT_VERSION = '2.23.11F';
   const GPT_URL = 'https://chatgpt.com/g/g-6a1099bd986881918e0c582d35aafb1d-yeogbyeongkilreo';
   const PANEL_ID = 'zk-tm-unified-panel-v4';
   const JOB_KEY = 'zk_current_job_v2';
@@ -45,7 +45,7 @@
   };
   const LEGACY_PANEL_IDS = ['zk-userscript-panel-v1', 'zk-chatgpt-companion-panel-v1', 'zk-tm-unified-panel-v3', 'zk-tm-unified-panel-newtab-test'];
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-  if (BOOKMARKLET_MODE && typeof window.GM === 'undefined') {
+  if ((BOOKMARKLET_MODE || ONECLICK_BRIDGE) && typeof window.GM === 'undefined') {
     window.GM = {
       setValue: async (key, value) => localStorage.setItem(`zk_bookmarklet_${key}`, JSON.stringify(value)),
       getValue: async (key, fallback) => {
@@ -97,7 +97,7 @@
   }
 
   function openTransferTab() {
-    if (BOOKMARKLET_MODE || localStorage.getItem(NEW_TAB_MODE_KEY) === 'false') return null;
+    if (BOOKMARKLET_MODE || ONECLICK_BRIDGE || localStorage.getItem(NEW_TAB_MODE_KEY) === 'false') return null;
     try { return window.open('about:blank', '_blank'); }
     catch (error) { return null; }
   }
@@ -111,9 +111,22 @@
     if (BOOKMARKLET_MODE) {
       const bookmarkletJob = { ...job, bookmarklet: true };
       const payload = encodeTransfer(bookmarkletJob);
-      say(ONECLICK_BRIDGE ? `${userscriptMessage} GPT에서 자동으로 이어서 처리해요.` : `${userscriptMessage} GPT로 이동한 뒤 같은 북마클릿을 다시 눌러주세요.`);
+      say(`${userscriptMessage} GPT로 이동한 뒤 같은 북마클릿을 다시 눌러주세요.`);
       await sleep(300);
       location.replace(`${browserOnlyGptUrl(GPT_URL)}#${BOOKMARKLET_JOB_HASH}=${payload}`);
+      return;
+    }
+    if (ONECLICK_BRIDGE) {
+      const outgoingJob = { ...job, newTab: true, oneclick: true };
+      const payload = encodeTransfer(outgoingJob);
+      const target = `${browserOnlyGptUrl(GPT_URL)}#akjob=${encodeURIComponent(payload)}`;
+      say(userscriptMessage);
+      const transferTab = window.open(target, '_blank');
+      if (transferTab && !transferTab.closed) {
+        try { transferTab.focus(); } catch (error) {}
+      } else {
+        say('Firefox에서 ZETA의 팝업/새 탭 열기를 허용한 뒤 다시 시도해주세요.', true);
+      }
       return;
     }
     const transferTab = preparedTab || openTransferTab();
@@ -1525,6 +1538,27 @@
     guardAgainstLegacyPanels();
     if (/zeta-ai\.io$/i.test(location.hostname)) {
       const { say, showSummaryResult } = panel('zeta');
+      if (ONECLICK_BRIDGE) {
+        let applyingOneClick = false;
+        let attemptedOneClickId = '';
+        window.addEventListener('__AUTO_KILLER_ONECLICK_RESPONSE__', async event => {
+          const pending = event.detail;
+          if (applyingOneClick || !pending || !pending.id || pending.id === attemptedOneClickId) return;
+          if (pending.room !== location.href.split('#')[0]) return;
+          applyingOneClick = true;
+          attemptedOneClickId = pending.id;
+          try {
+            if (pending.type === 'summary') {
+              showSummaryResult(pending.text);
+              say('요약이 완료됐어요. 미리보기에서 복사할 수 있어요.');
+            } else {
+              await applyToZeta(pending.text, say, pending.type || 'review');
+            }
+          } finally {
+            applyingOneClick = false;
+          }
+        });
+      }
       const bookmarkletResult = readBookmarkletTransfer(BOOKMARKLET_RESULT_PREFIX);
       if (bookmarkletResult && bookmarkletResult.room === location.href.split('#')[0]) {
         history.replaceState(null, '', bookmarkletResult.room);
