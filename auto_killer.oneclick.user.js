@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AUTO_KILLER OneClick Bridge (Firefox Test)
 // @namespace    local.zeta.gpt.oneclick
-// @version      2.23.10H
+// @version      2.23.10H1
 // @description  ZETA에서 한 번 눌러 GPT 처리와 ZETA 복귀까지 자동으로 이어주는 AUTO_KILLER 테스트 브리지입니다.
 // @match        https://*.zeta-ai.io/*
 // @match        https://zeta-ai.io/*
@@ -19,7 +19,7 @@
 (function autoKillerOneClickBridge() {
   'use strict';
 
-  const VERSION = '2.23.10H';
+  const VERSION = '2.23.10H1';
   const CORE_URL = 'https://ztcgh01.github.io/autokiller-test/auto_killer.core.js';
   const SESSION_KEY = '__AUTO_KILLER_ONECLICK_JOB_V1__';
   const SESSION_TTL = 30 * 60 * 1000;
@@ -115,10 +115,25 @@
     pageWindow.__AUTO_KILLER_ONECLICK_BRIDGE__ = true;
     pageWindow.__AUTO_KILLER_CORE_LOADING__ = true;
 
+    // core는 북마클릿 모드에서 GM.setValue/getValue/deleteValue를 사용한다.
+    // 외부 core를 new Function으로 실행할 때 GM 매개변수를 undefined로 넘기면
+    // window.GM 폴리필이 생겨도 매개변수가 전역 GM을 가려 초기화 단계에서 실패한다.
+    const gmCompat = {
+      setValue: async (key, value) => pageWindow.localStorage.setItem(`zk_bookmarklet_${key}`, JSON.stringify(value)),
+      getValue: async (key, fallback) => {
+        try {
+          const value = pageWindow.localStorage.getItem(`zk_bookmarklet_${key}`);
+          return value === null ? fallback : JSON.parse(value);
+        } catch (error) { return fallback; }
+      },
+      deleteValue: async key => pageWindow.localStorage.removeItem(`zk_bookmarklet_${key}`)
+    };
+    try { pageWindow.GM = gmCompat; } catch (error) {}
+
     xhrLoad(CORE_URL, source => {
       try {
         const run = new Function('window', 'globalThis', 'document', 'GM', 'GM_info', `${source}\n//# sourceURL=${CORE_URL}`);
-        run.call(pageWindow, pageWindow, pageWindow, pageWindow.document, undefined, { script: { version: VERSION } });
+        run.call(pageWindow, pageWindow, pageWindow, pageWindow.document, gmCompat, { script: { version: VERSION } });
         pageWindow.__AUTO_KILLER_CORE_LOADED__ = true;
       } catch (error) {
         pageWindow.__AUTO_KILLER_CORE_LOADING__ = false;
