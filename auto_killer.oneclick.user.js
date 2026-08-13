@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AUTO_KILLER OneClick Bridge (Firefox)
 // @namespace    local.zeta.gpt.oneclick
-// @version      2.23.12F
+// @version      2.23.13F
 // @description  Firefox에서 ZETA → 역병킬러 GPT → ZETA를 한 번의 작업 클릭으로 자동 왕복합니다.
 // @match        https://*.zeta-ai.io/*
 // @match        https://zeta-ai.io/*
@@ -22,7 +22,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.23.12F';
+  const VERSION = '2.23.13F';
   const CORE_URL = 'https://ztcgh01.github.io/autokiller-test/auto_killer.core.js';
   const RESPONSE_KEY = 'zk_oneclick_response_v1';
   const SESSION_KEY = 'zk_oneclick_gpt_job_v1';
@@ -129,13 +129,7 @@
         );
 
         // core는 1초 폴링 + focus/visibilitychange로 위 키를 자동 적용한다.
-        // event는 같은 realm에서 읽기 쉬운 JSON 문자열만 보조 신호로 보낸다.
-        try {
-          pageWindow.dispatchEvent(new pageWindow.CustomEvent(
-            '__AUTO_KILLER_ONECLICK_RESPONSE_JSON__',
-            { detail: JSON.stringify(response) }
-          ));
-        } catch (error) {}
+        // 결과 적용 경로는 localStorage pending 하나만 사용한다.
 
         await gmDelete(RESPONSE_KEY);
       } catch (error) {

@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const SCRIPT_VERSION = '2.23.12F-D1';
+  const SCRIPT_VERSION = '2.23.13F';
   const GPT_URL = 'https://chatgpt.com/g/g-6a1099bd986881918e0c582d35aafb1d-yeogbyeongkilreo';
   const PANEL_ID = 'zk-tm-unified-panel-v4';
   const JOB_KEY = 'zk_current_job_v2';
@@ -45,17 +45,6 @@
   };
   const LEGACY_PANEL_IDS = ['zk-userscript-panel-v1', 'zk-chatgpt-companion-panel-v1', 'zk-tm-unified-panel-v3', 'zk-tm-unified-panel-newtab-test'];
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-  const CORE_DIAG_KEY = 'zk_oneclick_core_diag_v1';
-  function coreDiag(label, data = {}) {
-    if (!ONECLICK_BRIDGE) return;
-    try {
-      const current = JSON.parse(localStorage.getItem(CORE_DIAG_KEY) || '[]');
-      const list = Array.isArray(current) ? current : [];
-      list.push({ t: new Date().toISOString().slice(11, 23), label, data });
-      localStorage.setItem(CORE_DIAG_KEY, JSON.stringify(list.slice(-30)));
-    } catch (error) {}
-  }
-  coreDiag('CORE_BOOT', { bookmarklet: BOOKMARKLET_MODE, oneclick: ONECLICK_BRIDGE, hasGM: typeof window.GM !== 'undefined' });
   if ((BOOKMARKLET_MODE || ONECLICK_BRIDGE) && typeof window.GM === 'undefined') {
     window.GM = {
       setValue: async (key, value) => localStorage.setItem(`zk_bookmarklet_${key}`, JSON.stringify(value)),
@@ -73,7 +62,6 @@
     get: (key, fallback) => GM.getValue(key, fallback),
     delete: key => GM.deleteValue(key)
   };
-  coreDiag('CORE_STORAGE_READY', { hasGM: typeof GM !== 'undefined', responseLocal: !!localStorage.getItem('zk_bookmarklet_' + RESPONSE_KEY) });
   const waitForScriptableBridge = () => window.__AUTO_KILLER_SCRIPTABLE__ === true ? sleep(350) : Promise.resolve();
 
   function encodeTransfer(value) {
@@ -1550,51 +1538,8 @@
     guardAgainstLegacyPanels();
     if (/zeta-ai\.io$/i.test(location.hostname)) {
       const { say, showSummaryResult } = panel('zeta');
-      coreDiag('CORE_PANEL_READY', { url: location.href.split('#')[0] });
-      if (ONECLICK_BRIDGE) {
-        let applyingOneClick = false;
-        let attemptedOneClickId = '';
-        window.addEventListener('__AUTO_KILLER_ONECLICK_RESPONSE__', async event => {
-          const pending = event.detail;
-          if (applyingOneClick || !pending || !pending.id || pending.id === attemptedOneClickId) return;
-          if (pending.room !== location.href.split('#')[0]) return;
-          applyingOneClick = true;
-          attemptedOneClickId = pending.id;
-          try {
-            if (pending.type === 'summary') {
-              showSummaryResult(pending.text);
-              say('요약이 완료됐어요. 미리보기에서 복사할 수 있어요.');
-            } else {
-              coreDiag('CORE_EVENT_APPLY_START', { id: pending.id, type: pending.type || 'review' });
-              const applied = await applyToZeta(pending.text, say, pending.type || 'review');
-              coreDiag('CORE_EVENT_APPLY_DONE', { id: pending.id, applied });
-            }
-          } finally {
-            applyingOneClick = false;
-          }
-        });
-        window.addEventListener('__AUTO_KILLER_ONECLICK_RESPONSE_JSON__', async event => {
-          let pending = null;
-          try { pending = JSON.parse(event.detail || 'null'); } catch (error) {}
-          coreDiag('CORE_EVENT_JSON', { id: pending?.id || '', room: pending?.room || '', current: location.href.split('#')[0], applyingOneClick, attemptedOneClickId });
-          if (applyingOneClick || !pending || !pending.id || pending.id === attemptedOneClickId) return;
-          if (pending.room !== location.href.split('#')[0]) { coreDiag('CORE_EVENT_ROOM_MISMATCH', { room: pending.room, current: location.href.split('#')[0] }); return; }
-          applyingOneClick = true;
-          attemptedOneClickId = pending.id;
-          try {
-            if (pending.type === 'summary') {
-              showSummaryResult(pending.text);
-              say('요약이 완료됐어요. 미리보기에서 복사할 수 있어요.');
-            } else {
-              coreDiag('CORE_EVENT_APPLY_START', { id: pending.id, type: pending.type || 'review' });
-              const applied = await applyToZeta(pending.text, say, pending.type || 'review');
-              coreDiag('CORE_EVENT_APPLY_DONE', { id: pending.id, applied });
-            }
-          } finally {
-            applyingOneClick = false;
-          }
-        });
-      }
+      // OneClick 결과는 sharedStorage(localStorage) pending 경로 하나로만 적용한다.
+      // 이벤트와 폴링의 동시 applyToZeta() 진입을 막아 중복 적용 경쟁 상태를 제거한다.
       const bookmarkletResult = readBookmarkletTransfer(BOOKMARKLET_RESULT_PREFIX);
       if (bookmarkletResult && bookmarkletResult.room === location.href.split('#')[0]) {
         history.replaceState(null, '', bookmarkletResult.room);
@@ -1611,10 +1556,7 @@
       const receivePending = async () => {
         if (applyingPending) return;
         const pending = await sharedStorage.get(RESPONSE_KEY, null);
-        if (!pending) return;
-        coreDiag('CORE_PENDING_READ', { id: pending.id || '', room: pending.room || '', current: location.href.split('#')[0], attemptedPendingId });
-        if (pending.room !== location.href.split('#')[0]) { coreDiag('CORE_PENDING_ROOM_MISMATCH', { room: pending.room, current: location.href.split('#')[0] }); return; }
-        if (pending.id === attemptedPendingId) { coreDiag('CORE_PENDING_DUP_SKIP', { id: pending.id }); return; }
+        if (!pending || pending.room !== location.href.split('#')[0] || pending.id === attemptedPendingId) return;
         applyingPending = true;
         attemptedPendingId = pending.id;
         try {
@@ -1623,10 +1565,8 @@
             say('요약이 완료됐어요. 미리보기에서 복사할 수 있어요.');
             await sharedStorage.delete(RESPONSE_KEY);
           } else {
-            coreDiag('CORE_PENDING_APPLY_START', { id: pending.id, type: pending.type || 'review' });
             const applied = await applyToZeta(pending.text, say, pending.type || 'review');
-            coreDiag('CORE_PENDING_APPLY_DONE', { id: pending.id, applied });
-            if (applied) { await sharedStorage.delete(RESPONSE_KEY); coreDiag('CORE_PENDING_DELETED', { id: pending.id }); }
+            if (applied) await sharedStorage.delete(RESPONSE_KEY);
           }
         } finally {
           applyingPending = false;
