@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const SCRIPT_VERSION = '2.23.8';
+  const SCRIPT_VERSION = '2.23.9H';
   const GPT_URL = 'https://chatgpt.com/g/g-6a1099bd986881918e0c582d35aafb1d-yeogbyeongkilreo';
   const PANEL_ID = 'zk-tm-unified-panel-v4';
   const JOB_KEY = 'zk_current_job_v2';
@@ -11,6 +11,8 @@
   const BOOKMARKLET_MODE = window.__AUTO_KILLER_BOOKMARKLET__ === true;
   const BOOKMARKLET_JOB_PREFIX = '__AUTO_KILLER_BOOKMARKLET_JOB_V1__:';
   const BOOKMARKLET_RESULT_PREFIX = '__AUTO_KILLER_BOOKMARKLET_RESULT_V1__:';
+  const BOOKMARKLET_JOB_HASH = 'akjob';
+  const BOOKMARKLET_RESULT_HASH = 'akresult';
   const GENERATION_DEFAULT_CHARACTER_COUNT = 20;
   const GENERATION_CHARACTER_COUNT_KEY = 'zk_generation_character_count_v1';
   const GENERATION_PROMPTS_KEY = 'zk_generation_prompts_v1';
@@ -78,8 +80,11 @@
   }
 
   function readBookmarkletTransfer(prefix) {
-    if (!BOOKMARKLET_MODE || !window.name.startsWith(prefix)) return null;
-    return decodeTransfer(window.name.slice(prefix.length));
+    if (!BOOKMARKLET_MODE) return null;
+    const key = prefix === BOOKMARKLET_RESULT_PREFIX ? BOOKMARKLET_RESULT_HASH : BOOKMARKLET_JOB_HASH;
+    const match = location.hash.match(new RegExp(`(?:^#|[&#])${key}=([^&]+)`));
+    if (!match) return null;
+    return decodeTransfer(decodeURIComponent(match[1]));
   }
 
   function browserOnlyGptUrl(value) {
@@ -104,10 +109,10 @@
   async function handoffJob(job, say, userscriptMessage, preparedTab = null) {
     if (BOOKMARKLET_MODE) {
       const bookmarkletJob = { ...job, bookmarklet: true };
-      window.name = `${BOOKMARKLET_JOB_PREFIX}${encodeTransfer(bookmarkletJob)}`;
-      say(`${userscriptMessage} GPT로 이동한 뒤 북마클릿을 다시 눌러주세요.`);
+      const payload = encodeTransfer(bookmarkletJob);
+      say(`${userscriptMessage} GPT로 이동한 뒤 같은 북마클릿을 다시 눌러주세요.`);
       await sleep(300);
-      location.replace(`${browserOnlyGptUrl(GPT_URL)}#zkbookmarklet=job`);
+      location.replace(`${browserOnlyGptUrl(GPT_URL)}#${BOOKMARKLET_JOB_HASH}=${payload}`);
       return;
     }
     const transferTab = preparedTab || openTransferTab();
@@ -1446,11 +1451,10 @@
         const conversationUrl = location.href.split('#')[0];
         const response = { id: job.id, type: job.type || 'review', room: job.room, text, time: Date.now() };
         if (job.bookmarklet) {
-          window.name = `${BOOKMARKLET_RESULT_PREFIX}${encodeTransfer(response)}`;
-          say('제타로 전달 완료 · 제타로 이동한 뒤 북마클릿을 다시 눌러주세요.');
+          say('제타로 전달 완료 · 제타로 이동한 뒤 같은 북마클릿을 다시 눌러주세요.');
           state.textContent = '완료';
           gptBusy = false;
-          setTimeout(() => { location.replace(`${job.room.split('#')[0]}#zkbookmarklet=result`); }, 650);
+          setTimeout(() => { location.replace(`${job.room.split('#')[0]}#${BOOKMARKLET_RESULT_HASH}=${encodeTransfer(response)}`); }, 650);
           return;
         }
         if (/\/c\//.test(new URL(conversationUrl).pathname)) await sharedStorage.set(CONVERSATION_KEY, conversationUrl);
@@ -1480,8 +1484,7 @@
   async function runOnGpt(job, say, state) {
     if (!job || !job.id || gptBusy || job.id === lastJobId) return;
     if (job.schema !== JOB_SCHEMA) {
-      if (job.bookmarklet) window.name = '';
-      else await sharedStorage.delete(JOB_KEY);
+      if (!job.bookmarklet) await sharedStorage.delete(JOB_KEY);
       say('구버전 작업을 삭제했어요. 제타에서 새로 시작하세요.', true);
       state.textContent = '재시작 필요';
       return;
@@ -1509,9 +1512,7 @@
     await sleep(400);
     const submit = await waitFor('#composer-submit-button', 10000);
     if (!submit) { say('전송 버튼을 못 찾았어요.', true); state.textContent = '오류'; gptBusy = false; return; }
-    if (submittedJob.bookmarklet) {
-      window.name = `${BOOKMARKLET_JOB_PREFIX}${encodeTransfer(submittedJob)}`;
-    } else {
+    if (!submittedJob.bookmarklet) {
       await sharedStorage.set(JOB_KEY, submittedJob);
     }
     submit.click();
@@ -1525,7 +1526,6 @@
       const { say, showSummaryResult } = panel('zeta');
       const bookmarkletResult = readBookmarkletTransfer(BOOKMARKLET_RESULT_PREFIX);
       if (bookmarkletResult && bookmarkletResult.room === location.href.split('#')[0]) {
-        window.name = '';
         history.replaceState(null, '', bookmarkletResult.room);
         if (bookmarkletResult.type === 'summary') {
           showSummaryResult(bookmarkletResult.text);
