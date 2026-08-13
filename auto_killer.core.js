@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const SCRIPT_VERSION = '2.23.9H';
+  const SCRIPT_VERSION = '2.23.10H';
   const GPT_URL = 'https://chatgpt.com/g/g-6a1099bd986881918e0c582d35aafb1d-yeogbyeongkilreo';
   const PANEL_ID = 'zk-tm-unified-panel-v4';
   const JOB_KEY = 'zk_current_job_v2';
@@ -9,6 +9,7 @@
   const NEW_TAB_MODE_KEY = 'zk_new_tab_mode_v1';
   const JOB_SCHEMA = 4;
   const BOOKMARKLET_MODE = window.__AUTO_KILLER_BOOKMARKLET__ === true;
+  const ONECLICK_BRIDGE = window.__AUTO_KILLER_ONECLICK_BRIDGE__ === true;
   const BOOKMARKLET_JOB_PREFIX = '__AUTO_KILLER_BOOKMARKLET_JOB_V1__:';
   const BOOKMARKLET_RESULT_PREFIX = '__AUTO_KILLER_BOOKMARKLET_RESULT_V1__:';
   const BOOKMARKLET_JOB_HASH = 'akjob';
@@ -110,7 +111,7 @@
     if (BOOKMARKLET_MODE) {
       const bookmarkletJob = { ...job, bookmarklet: true };
       const payload = encodeTransfer(bookmarkletJob);
-      say(`${userscriptMessage} GPT로 이동한 뒤 같은 북마클릿을 다시 눌러주세요.`);
+      say(ONECLICK_BRIDGE ? `${userscriptMessage} GPT에서 자동으로 이어서 처리해요.` : `${userscriptMessage} GPT로 이동한 뒤 같은 북마클릿을 다시 눌러주세요.`);
       await sleep(300);
       location.replace(`${browserOnlyGptUrl(GPT_URL)}#${BOOKMARKLET_JOB_HASH}=${payload}`);
       return;
@@ -353,7 +354,7 @@
     root.style.cssText = `all:initial;color-scheme:light;position:fixed;right:14px;bottom:88px;z-index:2147483647;display:flex;min-width:${mode === 'zeta' ? '292px' : '178px'};max-width:${mode === 'zeta' ? '360px' : '290px'};box-sizing:border-box;flex-direction:column;gap:4px;padding:6px 7px;border:1px solid #e2e5e9;border-radius:12px;background:#fff;box-shadow:0 6px 18px rgba(55,65,81,.10);font:650 12px system-ui,sans-serif;color:#4b5563;user-select:none;isolation:isolate;overflow:hidden;visibility:visible;opacity:1`;
     const header = document.createElement('div'); header.style.cssText = 'display:flex;flex:none;align-items:center;gap:4px;min-height:16px;padding:0;cursor:grab;touch-action:none';
     const dots = document.createElement('span'); dots.textContent = '⠿'; dots.style.cssText = 'color:#9ca3af;font-size:11px;line-height:1';
-    const title = document.createElement('span'); title.textContent = `AUTO_KILLER ${SCRIPT_VERSION} ${BOOKMARKLET_MODE ? 'B' : 'U'}`; title.style.cssText = 'flex:1;color:#8a9099;font:750 9px/1 system-ui,sans-serif;letter-spacing:.04em';
+    const title = document.createElement('span'); title.textContent = `AUTO_KILLER ${SCRIPT_VERSION} ${ONECLICK_BRIDGE ? '1C' : (BOOKMARKLET_MODE ? 'B' : 'U')}`; title.style.cssText = 'flex:1;color:#8a9099;font:750 9px/1 system-ui,sans-serif;letter-spacing:.04em';
     const row = document.createElement('div'); row.style.cssText = 'display:flex;flex:none;gap:6px;align-items:center;justify-content:flex-start';
     const settings = document.createElement('div'); settings.style.cssText = 'display:none;width:320px;max-height:calc(90vh - 64px);min-height:0;box-sizing:border-box;flex:1 1 auto;flex-direction:column;gap:7px;overflow-y:auto;overscroll-behavior:contain;padding:8px;border:1px solid #e3e6ea;border-radius:9px;background:#fafafa;color:#4b5563;font:600 12px/1.3 system-ui,sans-serif;color-scheme:light';
     const status = document.createElement('div'); status.style.cssText = 'display:none;flex:none;max-width:320px;padding:4px 4px 0;border-top:1px solid #e5e7eb;color:#6b7280;font:500 10px/1.3 system-ui,sans-serif;word-break:keep-all';
