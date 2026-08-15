@@ -1,19 +1,20 @@
 /* AUTO_KILLER remote core
- * Clean remote baseline: 2.25
+ * Thin-loader test baseline: 2.25.3T
  * Temporary Chat: every job starts a fresh temporary chat.
  */
 (function () {
   'use strict';
   window.__AUTO_KILLER_REMOTE_CORE_LOADED__ = true;
-  window.__AUTO_KILLER_REMOTE_CORE_VERSION__ = '2.25';
+  window.__AUTO_KILLER_REMOTE_CORE_VERSION__ = '2.25.3T';
 
     'use strict';
-    const SCRIPT_VERSION = '2.25';
+    const SCRIPT_VERSION = '2.25.3T';
     const GPT_URL = 'https://chatgpt.com/g/g-6a1099bd986881918e0c582d35aafb1d-yeogbyeongkilreo';
     const PANEL_ID = 'zk-tm-unified-panel-v4';
     const JOB_KEY = 'zk_current_job_v2';
     const RESPONSE_KEY = 'zk_response_v2';
     const CONVERSATION_KEY = 'zk_gpt_conversation_v3';
+    const ONECLICK_SESSION_KEY = 'zk_oneclick_gpt_job_v1';
     const NEW_TAB_MODE_KEY = 'zk_new_tab_mode_v1';
     const TEMPORARY_CHAT_KEY = 'zk_temporary_chat_mode_v1';
     const JOB_SCHEMA = 4;
@@ -55,7 +56,37 @@
     };
     const LEGACY_PANEL_IDS = ['zk-userscript-panel-v1', 'zk-chatgpt-companion-panel-v1', 'zk-tm-unified-panel-v3', 'zk-tm-unified-panel-newtab-test'];
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-    if ((BOOKMARKLET_MODE || ONECLICK_BRIDGE) && typeof window.GM === 'undefined') {
+    function bridgeStorageRequest(op, key, value, fallback) {
+      return new Promise(resolve => {
+        const id = `akgm_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        let done = false;
+        const finish = result => {
+          if (done) return;
+          done = true;
+          window.removeEventListener('message', onMessage);
+          resolve(result);
+        };
+        const onMessage = event => {
+          const data = event?.data;
+          if (!data || data.__AUTO_KILLER_GM_RESPONSE__ !== true || data.id !== id) return;
+          if (data.ok === false) finish(op === 'get' ? fallback : undefined);
+          else finish(data.value);
+        };
+        window.addEventListener('message', onMessage);
+        try {
+          window.postMessage({
+            __AUTO_KILLER_GM_REQUEST__: true,
+            id, op, key, value
+          }, '*');
+        } catch (error) {
+          finish(op === 'get' ? fallback : undefined);
+          return;
+        }
+        setTimeout(() => finish(op === 'get' ? fallback : undefined), 5000);
+      });
+    }
+
+    if (BOOKMARKLET_MODE && typeof window.GM === 'undefined') {
       window.GM = {
         setValue: async (key, value) => localStorage.setItem(`zk_bookmarklet_${key}`, JSON.stringify(value)),
         getValue: async (key, fallback) => {
@@ -67,10 +98,26 @@
         deleteValue: async key => localStorage.removeItem(`zk_bookmarklet_${key}`)
       };
     }
+
     const sharedStorage = {
-      set: (key, value) => window.GM.setValue(key, value),
-      get: (key, fallback) => window.GM.getValue(key, fallback),
-      delete: key => window.GM.deleteValue(key)
+      set: (key, value) => {
+        if (window.GM && typeof window.GM.setValue === 'function') return window.GM.setValue(key, value);
+        if (ONECLICK_BRIDGE) return bridgeStorageRequest('set', key, value);
+        return Promise.resolve(localStorage.setItem(`zk_core_${key}`, JSON.stringify(value)));
+      },
+      get: (key, fallback) => {
+        if (window.GM && typeof window.GM.getValue === 'function') return window.GM.getValue(key, fallback);
+        if (ONECLICK_BRIDGE) return bridgeStorageRequest('get', key, undefined, fallback);
+        try {
+          const value = localStorage.getItem(`zk_core_${key}`);
+          return Promise.resolve(value === null ? fallback : JSON.parse(value));
+        } catch (error) { return Promise.resolve(fallback); }
+      },
+      delete: key => {
+        if (window.GM && typeof window.GM.deleteValue === 'function') return window.GM.deleteValue(key);
+        if (ONECLICK_BRIDGE) return bridgeStorageRequest('delete', key);
+        return Promise.resolve(localStorage.removeItem(`zk_core_${key}`));
+      }
     };
     const waitForScriptableBridge = () => window.__AUTO_KILLER_SCRIPTABLE__ === true ? sleep(350) : Promise.resolve();
 
@@ -93,6 +140,12 @@
     function readBookmarkletTransfer(prefix) {
       if (!BOOKMARKLET_MODE) return null;
       const key = prefix === BOOKMARKLET_RESULT_PREFIX ? BOOKMARKLET_RESULT_HASH : BOOKMARKLET_JOB_HASH;
+      const match = location.hash.match(new RegExp(`(?:^#|[&#])${key}=([^&]+)`));
+      if (!match) return null;
+      return decodeTransfer(decodeURIComponent(match[1]));
+    }
+
+    function readHashTransfer(key) {
       const match = location.hash.match(new RegExp(`(?:^#|[&#])${key}=([^&]+)`));
       if (!match) return null;
       return decodeTransfer(decodeURIComponent(match[1]));
@@ -148,7 +201,7 @@
         const payload = encodeTransfer(outgoingJob);
         const conversationUrl = temporaryChat
           ? baseGptUrl
-          : (window.__AUTO_KILLER_CONVERSATION_URL__ || GPT_URL);
+          : await sharedStorage.get(CONVERSATION_KEY, GPT_URL);
         const target = `${browserOnlyGptUrl(conversationUrl.split('#')[0])}#akjob=${encodeURIComponent(payload)}`;
         say(temporaryChat ? `${userscriptMessage} 임시채팅으로 여는 중…` : userscriptMessage);
         if (ONECLICK_IOS) {
@@ -441,7 +494,7 @@
       root.style.cssText = `all:initial;color-scheme:light;position:fixed;right:14px;bottom:88px;z-index:2147483647;display:flex;min-width:${mode === 'zeta' ? '292px' : '178px'};max-width:${mode === 'zeta' ? '360px' : '290px'};box-sizing:border-box;flex-direction:column;gap:4px;padding:6px 7px;border:1px solid #e2e5e9;border-radius:12px;background:#fff;box-shadow:0 6px 18px rgba(55,65,81,.10);font:650 12px system-ui,sans-serif;color:#4b5563;user-select:none;isolation:isolate;overflow:hidden;visibility:visible;opacity:1`;
       const header = document.createElement('div'); header.style.cssText = 'display:flex;flex:none;align-items:center;gap:4px;min-height:16px;padding:0;cursor:grab;touch-action:none';
       const dots = document.createElement('span'); dots.textContent = '⠿'; dots.style.cssText = 'color:#9ca3af;font-size:11px;line-height:1';
-      const title = document.createElement('span'); title.textContent = `AUTO_KILLER ${SCRIPT_VERSION} ${ONECLICK_BRIDGE ? '1C' : (BOOKMARKLET_MODE ? 'B' : 'U')}`; title.style.cssText = 'flex:1;color:#8a9099;font:750 9px/1 system-ui,sans-serif;letter-spacing:.04em';
+      const title = document.createElement('span'); title.textContent = `AUTO_KILLER ${SCRIPT_VERSION}`; title.style.cssText = 'flex:1;color:#8a9099;font:750 9px/1 system-ui,sans-serif;letter-spacing:.04em';
       const row = document.createElement('div'); row.style.cssText = 'display:flex;flex:none;gap:6px;align-items:center;justify-content:flex-start';
       const settings = document.createElement('div'); settings.style.cssText = 'display:none;width:320px;max-height:calc(90vh - 64px);min-height:0;box-sizing:border-box;flex:1 1 auto;flex-direction:column;gap:7px;overflow-y:auto;overscroll-behavior:contain;padding:8px;border:1px solid #e3e6ea;border-radius:9px;background:#fafafa;color:#4b5563;font:600 12px/1.3 system-ui,sans-serif;color-scheme:light';
       const status = document.createElement('div'); status.style.cssText = 'display:none;flex:none;max-width:320px;padding:4px 4px 0;border-top:1px solid #e5e7eb;color:#6b7280;font:500 10px/1.3 system-ui,sans-serif;word-break:keep-all';
@@ -1546,6 +1599,10 @@
       return [...document.querySelectorAll('[data-testid^="conversation-turn-"][data-turn="assistant"]')];
     }
 
+    function currentTurnId(turn) {
+      return turn?.getAttribute('data-turn-id') || turn?.getAttribute('data-turn-id-container') || '';
+    }
+
     function assistantText(turn) {
       if (!turn) return '';
       const message = turn.querySelector('[data-message-author-role="assistant"]');
@@ -1553,91 +1610,293 @@
       return content?.innerText?.trim() || '';
     }
 
+    function dispatchInputCompat(element, text = '') {
+      try {
+        element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+      } catch (error) {
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }
+
+    function editableText(element) {
+      if (!element) return '';
+      if ('value' in element && typeof element.value === 'string') return element.value;
+      return element.innerText || element.textContent || '';
+    }
+
+    async function insertPromptCompat(prompt, text) {
+      prompt.focus();
+
+      if ('value' in prompt && typeof prompt.value === 'string') {
+        const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(prompt), 'value')?.set;
+        if (setter) setter.call(prompt, text);
+        else prompt.value = text;
+        dispatchInputCompat(prompt, text);
+        prompt.dispatchEvent(new Event('change', { bubbles: true }));
+        await sleep(80);
+        return editableText(prompt).trim().length > 0;
+      }
+
+      let inserted = false;
+      try { inserted = document.execCommand('insertText', false, text) === true; } catch (error) {}
+      dispatchInputCompat(prompt, text);
+      await sleep(100);
+      if (inserted && editableText(prompt).trim()) return true;
+
+      try {
+        prompt.replaceChildren();
+        String(text).split('\n').forEach(line => {
+          const paragraph = document.createElement('p');
+          if (line) paragraph.textContent = line;
+          else paragraph.append(document.createElement('br'));
+          prompt.append(paragraph);
+        });
+        const selection = window.getSelection?.();
+        if (selection && prompt.lastChild) {
+          const range = document.createRange();
+          range.selectNodeContents(prompt.lastChild);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+        dispatchInputCompat(prompt, text);
+        await sleep(120);
+        return editableText(prompt).trim().length > 0;
+      } catch (error) {
+        console.warn('[AUTO_KILLER Core] GPT 입력 fallback 실패', error);
+        return false;
+      }
+    }
+
     function watchForGptResponse(job, say, state) {
       say('GPT 답변을 기다리는 중…');
-      let checks = 0;
-      let phase = '';
-      const showPhase = text => { if (phase !== text) { phase = text; say(text); } };
-      const timer = setInterval(async () => {
-        if (++checks > 375) { clearInterval(timer); say('답변 대기 시간이 초과됐어요.', true); state.textContent = '오류'; gptBusy = false; return; }
+
+      let finished = false;
+      let confirmTimer = null;
+      let fallbackTimer = null;
+      let timeoutTimer = null;
+      let observer = null;
+
+      const cleanup = () => {
+        if (observer) observer.disconnect();
+        if (fallbackTimer) clearInterval(fallbackTimer);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (confirmTimer) clearTimeout(confirmTimer);
+        observer = null;
+        fallbackTimer = null;
+        timeoutTimer = null;
+        confirmTimer = null;
+      };
+
+      const checkCompletion = async () => {
+        if (finished) return;
+
         const turns = assistantTurns();
-        const answerTurn = turns[turns.length - 1] || null;
-        if (!answerTurn) { showPhase('assistant 답변 영역을 기다리는 중…'); return; }
-        const turnId = answerTurn.getAttribute('data-turn-id') || answerTurn.getAttribute('data-turn-id-container') || '';
-        if (!turnId || turnId === job.baselineTurnId) { showPhase('새 assistant 답변을 기다리는 중…'); return; }
-        const copyButton = answerTurn.querySelector('button[data-testid="copy-turn-action-button"]');
-        if (!copyButton || copyButton.disabled) { showPhase('새 답변 감지 · 생성 완료를 기다리는 중…'); return; }
-        const text = assistantText(answerTurn);
-        if (!text) { showPhase('완료 감지 · 답변 본문을 읽는 중…'); return; }
-        clearInterval(timer);
-        try {
-          const conversationUrl = location.href.split('#')[0];
-          const response = { id: job.id, type: job.type || 'review', room: job.room, text, time: Date.now() };
-          if (job.bookmarklet) {
-            say('제타로 전달 완료 · 제타로 이동한 뒤 같은 북마클릿을 다시 눌러주세요.');
+        const answer = turns[turns.length - 1] || null;
+        if (!answer) return;
+
+        const turnId = currentTurnId(answer);
+        if (!turnId || turnId === job.baselineTurnId) return;
+
+        if (document.querySelector('button[data-testid="stop-button"]')) return;
+
+        const copy = answer.querySelector('button[data-testid="copy-turn-action-button"]');
+        if (!copy || copy.disabled) return;
+
+        const firstText = assistantText(answer);
+        if (!firstText || confirmTimer) return;
+
+        confirmTimer = setTimeout(async () => {
+          confirmTimer = null;
+          if (finished) return;
+
+          const latestTurns = assistantTurns();
+          const latest = latestTurns[latestTurns.length - 1] || null;
+          if (!latest || currentTurnId(latest) !== turnId) return;
+          if (document.querySelector('button[data-testid="stop-button"]')) return;
+
+          const latestCopy = latest.querySelector('button[data-testid="copy-turn-action-button"]');
+          if (!latestCopy || latestCopy.disabled) return;
+
+          const finalText = assistantText(latest);
+          if (!finalText || finalText !== firstText) return;
+
+          finished = true;
+          cleanup();
+
+          try {
+            const currentUrl = location.href.split('#')[0];
+            let conversationUrl = '';
+            if (!job.temporaryChat) {
+              try {
+                if (/\/c\//.test(new URL(currentUrl).pathname)) conversationUrl = currentUrl;
+              } catch (error) {}
+            }
+
+            const response = {
+              id: job.id,
+              type: job.type || 'review',
+              room: job.room,
+              text: finalText,
+              time: Date.now(),
+              conversationUrl
+            };
+
+            try { sessionStorage.removeItem(ONECLICK_SESSION_KEY); } catch (error) {}
+
+            if (conversationUrl) {
+              try { await sharedStorage.set(CONVERSATION_KEY, conversationUrl); }
+              catch (error) { console.warn('[AUTO_KILLER Core] GPT 대화 URL 저장 실패', error); }
+            }
+
+            if (job.bookmarklet) {
+              say('제타로 전달 완료 · 제타로 이동한 뒤 같은 북마클릿을 다시 눌러주세요.');
+              state.textContent = '완료';
+              gptBusy = false;
+              setTimeout(() => {
+                location.replace(`${job.room.split('#')[0]}#${BOOKMARKLET_RESULT_HASH}=${encodeTransfer(response)}`);
+              }, 650);
+              return;
+            }
+
+            if (job.oneclick) {
+              if (job.newTab) {
+                await sharedStorage.set(RESPONSE_KEY, response);
+                state.textContent = '완료';
+                gptBusy = false;
+                try { if (window.opener && !window.opener.closed) window.opener.focus(); } catch (error) {}
+                window.close();
+                setTimeout(() => {
+                  if (!document.hidden) {
+                    location.replace(`${response.room.split('#')[0]}#${BOOKMARKLET_RESULT_HASH}=${encodeTransfer(response)}`);
+                  }
+                }, 900);
+                return;
+              }
+
+              // iPhone/iPad 같은 탭 복귀
+              try { await sharedStorage.set(RESPONSE_KEY, response); } catch (error) {}
+              state.textContent = '완료';
+              gptBusy = false;
+              await sleep(250);
+              location.replace(`${response.room.split('#')[0]}#${BOOKMARKLET_RESULT_HASH}=${encodeTransfer(response)}`);
+              return;
+            }
+
+            await sharedStorage.set(RESPONSE_KEY, response);
+            await sharedStorage.delete(JOB_KEY);
             state.textContent = '완료';
             gptBusy = false;
-            setTimeout(() => { location.replace(`${job.room.split('#')[0]}#${BOOKMARKLET_RESULT_HASH}=${encodeTransfer(response)}`); }, 650);
-            return;
-          }
-          if (!job.temporaryChat && /\/c\//.test(new URL(conversationUrl).pathname)) await sharedStorage.set(CONVERSATION_KEY, conversationUrl);
-          await sharedStorage.set(RESPONSE_KEY, response);
-          await sharedStorage.delete(JOB_KEY); say('제타로 전달 완료 · 원래 제타 탭으로 돌아가는 중'); state.textContent = '완료'; gptBusy = false;
-          setTimeout(() => {
-            const fallbackUrl = `${job.room.split('#')[0]}#zkreturn=${encodeURIComponent(job.id)}`;
-            if (job.newTab) {
-              if (window.opener && !window.opener.closed) {
-                try { window.opener.focus(); } catch (error) {}
+            setTimeout(() => {
+              const fallbackUrl = `${job.room.split('#')[0]}#zkreturn=${encodeURIComponent(job.id)}`;
+              if (job.newTab) {
+                try { if (window.opener && !window.opener.closed) window.opener.focus(); } catch (error) {}
+                window.close();
+                setTimeout(() => { location.replace(fallbackUrl); }, 500);
+              } else {
+                location.replace(fallbackUrl);
               }
-              window.close();
-              setTimeout(() => { location.replace(fallbackUrl); }, 500);
-            } else {
-              location.replace(fallbackUrl);
-            }
-          }, 650);
-        } catch (error) {
-          console.error('[AUTO_KILLER Userscripts] 응답 저장 실패', error);
-          say('응답 저장에 실패했어요. Userscripts의 웹사이트 권한을 확인해주세요.', true);
-          state.textContent = '저장 오류';
-          gptBusy = false;
-        }
-      }, 800);
+            }, 650);
+          } catch (error) {
+            console.error('[AUTO_KILLER Core] 응답 저장 실패', error);
+            say('응답 저장에 실패했어요.', true);
+            state.textContent = '저장 오류';
+            gptBusy = false;
+          }
+        }, 80);
+      };
+
+      observer = new MutationObserver(() => {
+        checkCompletion().catch(error => console.error('[AUTO_KILLER Core] 완료 감지 오류', error));
+      });
+      observer.observe(document.documentElement, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ['disabled', 'data-testid', 'aria-label']
+      });
+
+      fallbackTimer = setInterval(() => {
+        checkCompletion().catch(error => console.error('[AUTO_KILLER Core] 완료 백업 감지 오류', error));
+      }, 1200);
+
+      timeoutTimer = setTimeout(() => {
+        if (finished) return;
+        cleanup();
+        gptBusy = false;
+        say('답변 대기 시간이 초과됐어요.', true);
+        state.textContent = '오류';
+      }, 360000);
+
+      checkCompletion().catch(error => console.error('[AUTO_KILLER Core] 초기 완료 감지 오류', error));
     }
 
     async function runOnGpt(job, say, state) {
       if (!job || !job.id || gptBusy || job.id === lastJobId) return;
       if (job.schema !== JOB_SCHEMA) {
-        if (!job.bookmarklet) await sharedStorage.delete(JOB_KEY);
+        if (!job.bookmarklet && !job.oneclick) await sharedStorage.delete(JOB_KEY);
         say('구버전 작업을 삭제했어요. 제타에서 새로 시작하세요.', true);
         state.textContent = '재시작 필요';
         return;
       }
+
       gptBusy = true;
       lastJobId = job.id;
       state.textContent = '검토 중…';
+
       if (job.stage === 'submitted') {
-        say('페이지 전환 뒤 답변 감시를 이어가는 중…');
         watchForGptResponse(job, say, state);
         return;
       }
-      say('GPT 입력창을 기다리는 중…');
-      const prompt = await waitFor('#prompt-textarea');
-      if (!prompt) { say('GPT 입력창을 못 찾았어요.', true); state.textContent = '오류'; gptBusy = false; return; }
+
+      const prompt = await waitFor('#prompt-textarea', 30000);
+      if (!prompt) {
+        say('GPT 입력창을 못 찾았어요.', true);
+        state.textContent = '오류';
+        gptBusy = false;
+        return;
+      }
+
       const baselineTurns = assistantTurns();
-      const baselineTurn = baselineTurns[baselineTurns.length - 1] || null;
+      const baseline = baselineTurns[baselineTurns.length - 1] || null;
       const submittedJob = {
         ...job,
         stage: 'submitted',
-        baselineTurnId: baselineTurn?.getAttribute('data-turn-id') || baselineTurn?.getAttribute('data-turn-id-container') || '',
+        baselineTurnId: currentTurnId(baseline),
         submittedAt: Date.now()
       };
-      prompt.focus(); document.execCommand('insertText', false, job.text); prompt.dispatchEvent(new InputEvent('input', { bubbles: true }));
-      await sleep(400);
-      const submit = await waitFor('#composer-submit-button', 10000);
-      if (!submit) { say('전송 버튼을 못 찾았어요.', true); state.textContent = '오류'; gptBusy = false; return; }
-      if (!submittedJob.bookmarklet) {
+
+      if (job.oneclick) {
+        try { sessionStorage.setItem(ONECLICK_SESSION_KEY, JSON.stringify(submittedJob)); } catch (error) {}
+      } else if (!job.bookmarklet) {
         await sharedStorage.set(JOB_KEY, submittedJob);
       }
+
+      const inserted = await insertPromptCompat(prompt, job.text);
+      if (!inserted) {
+        say('GPT 입력창에 내용을 넣지 못했어요.', true);
+        state.textContent = '오류';
+        gptBusy = false;
+        return;
+      }
+
+      const submit = await waitFor('#composer-submit-button,button[data-testid="send-button"]', 10000);
+      if (!submit) {
+        say('전송 버튼을 못 찾았어요.', true);
+        state.textContent = '오류';
+        gptBusy = false;
+        return;
+      }
+
+      let attempts = 0;
+      while (submit.disabled && attempts++ < 30) await sleep(200);
+      if (submit.disabled) {
+        say('전송 버튼이 활성화되지 않았어요.', true);
+        state.textContent = '오류';
+        gptBusy = false;
+        return;
+      }
+
       submit.click();
       watchForGptResponse(submittedJob, say, state);
     }
@@ -1647,8 +1906,20 @@
       guardAgainstLegacyPanels();
       if (/zeta-ai\.io$/i.test(location.hostname)) {
         const { say, showSummaryResult } = panel('zeta');
-        // OneClick 결과는 sharedStorage(localStorage) pending 경로 하나로만 적용한다.
-        // 이벤트와 폴링의 동시 applyToZeta() 진입을 막아 중복 적용 경쟁 상태를 제거한다.
+
+        const oneclickResult = ONECLICK_BRIDGE ? readHashTransfer(BOOKMARKLET_RESULT_HASH) : null;
+        if (oneclickResult && oneclickResult.room === location.href.split('#')[0]) {
+          history.replaceState(null, '', oneclickResult.room);
+          if (oneclickResult.type === 'summary') {
+            showSummaryResult(oneclickResult.text);
+            say('요약이 완료됐어요. 미리보기에서 복사할 수 있어요.');
+          } else {
+            await applyToZeta(oneclickResult.text, say, oneclickResult.type || 'review');
+          }
+          try { await sharedStorage.delete(RESPONSE_KEY); } catch (error) {}
+          return;
+        }
+
         const bookmarkletResult = readBookmarkletTransfer(BOOKMARKLET_RESULT_PREFIX);
         if (bookmarkletResult && bookmarkletResult.room === location.href.split('#')[0]) {
           history.replaceState(null, '', bookmarkletResult.room);
@@ -1689,12 +1960,23 @@
         }
       } else if (/(^|\.)chatgpt\.com$/i.test(location.hostname)) {
         const { say, state } = panel('gpt');
+
+        const oneclickJob = ONECLICK_BRIDGE ? readHashTransfer(BOOKMARKLET_JOB_HASH) : null;
         const bookmarkletJob = readBookmarkletTransfer(BOOKMARKLET_JOB_PREFIX);
-        if (bookmarkletJob) history.replaceState(null, '', location.href.split('#')[0]);
-        const initialJob = bookmarkletJob || await sharedStorage.get(JOB_KEY, null);
+
+        if (oneclickJob || bookmarkletJob) {
+          try { history.replaceState(null, '', location.href.split('#')[0]); } catch (error) {}
+        }
+
+        let sessionJob = null;
+        if (ONECLICK_BRIDGE && !oneclickJob) {
+          try { sessionJob = JSON.parse(sessionStorage.getItem(ONECLICK_SESSION_KEY) || 'null'); } catch (error) {}
+        }
+
+        const initialJob = oneclickJob || sessionJob || bookmarkletJob || await sharedStorage.get(JOB_KEY, null);
         if (initialJob) await runOnGpt(initialJob, say, state);
         else if (BOOKMARKLET_MODE) say('제타에서 작업을 시작한 뒤, GPT로 이동하면 북마클릿을 다시 눌러주세요.', true);
-        else say('제타 작업 데이터가 없어요.', true);
+        else if (!ONECLICK_BRIDGE) say('제타 작업 데이터가 없어요.', true);
       }
     }
     init().catch(error => console.error('[AUTO_KILLER Userscripts]', error));
