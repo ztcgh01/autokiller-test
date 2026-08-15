@@ -1,20 +1,20 @@
 /* AUTO_KILLER remote core
- * Thin-loader test baseline: 2.25.3T
+ * Unified remote core: 2.25.3.1
  * Temporary Chat: every job starts a fresh temporary chat.
  */
 (function () {
   'use strict';
   window.__AUTO_KILLER_REMOTE_CORE_LOADED__ = true;
-  window.__AUTO_KILLER_REMOTE_CORE_VERSION__ = '2.25.3T';
+  window.__AUTO_KILLER_REMOTE_CORE_VERSION__ = '2.25.3.1';
 
     'use strict';
-    const SCRIPT_VERSION = '2.25.3T';
+    const SCRIPT_VERSION = '2.25.3.1';
     const GPT_URL = 'https://chatgpt.com/g/g-6a1099bd986881918e0c582d35aafb1d-yeogbyeongkilreo';
     const PANEL_ID = 'zk-tm-unified-panel-v4';
     const JOB_KEY = 'zk_current_job_v2';
     const RESPONSE_KEY = 'zk_response_v2';
     const CONVERSATION_KEY = 'zk_gpt_conversation_v3';
-    const ONECLICK_SESSION_KEY = 'zk_oneclick_gpt_job_v1';
+    const GPT_SESSION_KEY = 'zk_core_gpt_job_v1';
     const NEW_TAB_MODE_KEY = 'zk_new_tab_mode_v1';
     const TEMPORARY_CHAT_KEY = 'zk_temporary_chat_mode_v1';
     const JOB_SCHEMA = 4;
@@ -25,6 +25,8 @@
     const BOOKMARKLET_RESULT_PREFIX = '__AUTO_KILLER_BOOKMARKLET_RESULT_V1__:';
     const BOOKMARKLET_JOB_HASH = 'akjob';
     const BOOKMARKLET_RESULT_HASH = 'akresult';
+    const STORAGE_REQUEST_EVENT = '__AUTO_KILLER_GM_REQUEST_V1__';
+    const STORAGE_RESPONSE_EVENT = '__AUTO_KILLER_GM_RESPONSE_V1__';
     const GENERATION_DEFAULT_CHARACTER_COUNT = 20;
     const GENERATION_CHARACTER_COUNT_KEY = 'zk_generation_character_count_v1';
     const GENERATION_PROMPTS_KEY = 'zk_generation_prompts_v1';
@@ -56,69 +58,59 @@
     };
     const LEGACY_PANEL_IDS = ['zk-userscript-panel-v1', 'zk-chatgpt-companion-panel-v1', 'zk-tm-unified-panel-v3', 'zk-tm-unified-panel-newtab-test'];
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-    function bridgeStorageRequest(op, key, value, fallback) {
-      return new Promise(resolve => {
-        const id = `akgm_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-        let done = false;
-        const finish = result => {
-          if (done) return;
-          done = true;
-          window.removeEventListener('message', onMessage);
-          resolve(result);
-        };
-        const onMessage = event => {
-          const data = event?.data;
-          if (!data || data.__AUTO_KILLER_GM_RESPONSE__ !== true || data.id !== id) return;
-          if (data.ok === false) finish(op === 'get' ? fallback : undefined);
-          else finish(data.value);
-        };
-        window.addEventListener('message', onMessage);
+    const directGm = typeof GM === 'object' && GM && typeof GM.getValue === 'function'
+      ? GM
+      : (typeof window.GM === 'object' && window.GM && typeof window.GM.getValue === 'function' ? window.GM : null);
+
+    const localStorageBridge = {
+      set: async (key, value) => localStorage.setItem(`zk_bookmarklet_${key}`, JSON.stringify(value)),
+      get: async (key, fallback) => {
         try {
-          window.postMessage({
-            __AUTO_KILLER_GM_REQUEST__: true,
-            id, op, key, value
-          }, '*');
-        } catch (error) {
-          finish(op === 'get' ? fallback : undefined);
-          return;
-        }
-        setTimeout(() => finish(op === 'get' ? fallback : undefined), 5000);
+          const value = localStorage.getItem(`zk_bookmarklet_${key}`);
+          return value === null ? fallback : JSON.parse(value);
+        } catch (error) { return fallback; }
+      },
+      delete: async key => localStorage.removeItem(`zk_bookmarklet_${key}`)
+    };
+
+    function storageBridgeRequest(operation, key, value, fallback) {
+      return new Promise((resolve, reject) => {
+        const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const timeout = setTimeout(() => {
+          document.removeEventListener(STORAGE_RESPONSE_EVENT, receive);
+          reject(new Error(`저장소 연결 시간 초과: ${operation}`));
+        }, 10000);
+        const receive = event => {
+          let response = null;
+          try { response = JSON.parse(String(event.detail || '')); } catch (error) {}
+          if (!response || response.id !== id) return;
+          clearTimeout(timeout);
+          document.removeEventListener(STORAGE_RESPONSE_EVENT, receive);
+          if (response.ok) resolve(response.value);
+          else reject(new Error(response.error || `저장소 연결 실패: ${operation}`));
+        };
+        document.addEventListener(STORAGE_RESPONSE_EVENT, receive);
+        document.dispatchEvent(new CustomEvent(STORAGE_REQUEST_EVENT, {
+          detail: JSON.stringify({ id, operation, key, value, fallback })
+        }));
       });
     }
 
-    if (BOOKMARKLET_MODE && typeof window.GM === 'undefined') {
-      window.GM = {
-        setValue: async (key, value) => localStorage.setItem(`zk_bookmarklet_${key}`, JSON.stringify(value)),
-        getValue: async (key, fallback) => {
-          try {
-            const value = localStorage.getItem(`zk_bookmarklet_${key}`);
-            return value === null ? fallback : JSON.parse(value);
-          } catch (error) { return fallback; }
-        },
-        deleteValue: async key => localStorage.removeItem(`zk_bookmarklet_${key}`)
-      };
-    }
-
-    const sharedStorage = {
-      set: (key, value) => {
-        if (window.GM && typeof window.GM.setValue === 'function') return window.GM.setValue(key, value);
-        if (ONECLICK_BRIDGE) return bridgeStorageRequest('set', key, value);
-        return Promise.resolve(localStorage.setItem(`zk_core_${key}`, JSON.stringify(value)));
-      },
-      get: (key, fallback) => {
-        if (window.GM && typeof window.GM.getValue === 'function') return window.GM.getValue(key, fallback);
-        if (ONECLICK_BRIDGE) return bridgeStorageRequest('get', key, undefined, fallback);
-        try {
-          const value = localStorage.getItem(`zk_core_${key}`);
-          return Promise.resolve(value === null ? fallback : JSON.parse(value));
-        } catch (error) { return Promise.resolve(fallback); }
-      },
-      delete: key => {
-        if (window.GM && typeof window.GM.deleteValue === 'function') return window.GM.deleteValue(key);
-        if (ONECLICK_BRIDGE) return bridgeStorageRequest('delete', key);
-        return Promise.resolve(localStorage.removeItem(`zk_core_${key}`));
-      }
+    const eventStorageBridge = {
+      set: (key, value) => storageBridgeRequest('set', key, value, null),
+      get: (key, fallback) => storageBridgeRequest('get', key, null, fallback),
+      delete: key => storageBridgeRequest('delete', key, null, null)
     };
+
+    const sharedStorage = ONECLICK_BRIDGE && window.__AUTO_KILLER_STORAGE_BRIDGE__ === true
+      ? eventStorageBridge
+      : directGm
+        ? {
+            set: (key, value) => directGm.setValue(key, value),
+            get: (key, fallback) => directGm.getValue(key, fallback),
+            delete: key => directGm.deleteValue(key)
+          }
+        : localStorageBridge;
     const waitForScriptableBridge = () => window.__AUTO_KILLER_SCRIPTABLE__ === true ? sleep(350) : Promise.resolve();
 
     function encodeTransfer(value) {
@@ -138,14 +130,8 @@
     }
 
     function readBookmarkletTransfer(prefix) {
-      if (!BOOKMARKLET_MODE) return null;
+      if (!BOOKMARKLET_MODE && !ONECLICK_BRIDGE) return null;
       const key = prefix === BOOKMARKLET_RESULT_PREFIX ? BOOKMARKLET_RESULT_HASH : BOOKMARKLET_JOB_HASH;
-      const match = location.hash.match(new RegExp(`(?:^#|[&#])${key}=([^&]+)`));
-      if (!match) return null;
-      return decodeTransfer(decodeURIComponent(match[1]));
-    }
-
-    function readHashTransfer(key) {
       const match = location.hash.match(new RegExp(`(?:^#|[&#])${key}=([^&]+)`));
       if (!match) return null;
       return decodeTransfer(decodeURIComponent(match[1]));
@@ -198,10 +184,12 @@
         // 임시채팅 ON일 때는 저장된 일반 대화 URL을 쓰지 않고 Custom GPT 시작 주소로 새 임시채팅을 연다.
         // OFF로 돌아오면 기존에 저장해 둔 일반 대화 URL을 다시 그대로 재사용한다.
         const outgoingJob = { ...job, newTab: !ONECLICK_IOS, oneclick: true, temporaryChat };
+        // ChatGPT가 초기 로딩 중 URL hash를 지워도 작업을 잃지 않도록 GM 공용 저장소에도 보관한다.
+        await sharedStorage.set(JOB_KEY, outgoingJob);
         const payload = encodeTransfer(outgoingJob);
         const conversationUrl = temporaryChat
           ? baseGptUrl
-          : await sharedStorage.get(CONVERSATION_KEY, GPT_URL);
+          : (window.__AUTO_KILLER_CONVERSATION_URL__ || await sharedStorage.get(CONVERSATION_KEY, GPT_URL));
         const target = `${browserOnlyGptUrl(conversationUrl.split('#')[0])}#akjob=${encodeURIComponent(payload)}`;
         say(temporaryChat ? `${userscriptMessage} 임시채팅으로 여는 중…` : userscriptMessage);
         if (ONECLICK_IOS) {
@@ -561,6 +549,30 @@
       const compactToggle = makeButton('□', '#f3f4f6', '#4b5563'); compactToggle.title = '작은 플로팅 패널로 전환'; compactToggle.style.cssText += `padding:1px 5px;border-radius:6px;font-size:9px;display:${mode === 'zeta' ? 'inline-block' : 'none'}`;
       const close = makeButton('×', '#f3f4f6', '#4b5563'); close.style.cssText += 'padding:1px 5px;border-radius:6px;font-size:11px'; close.onclick = () => host.remove();
       header.append(dots, title, minimize, compactToggle, close);
+
+      // 2.25 구형 로더 → 2.25.3.1 통합 로더 1회 재설치 안내.
+      // 새 로더는 core 실행 전에 __AUTO_KILLER_STORAGE_BRIDGE__를 true로 세팅하므로 안내가 자동으로 사라진다.
+      const needsLoaderMigration = mode === 'zeta'
+        && ONECLICK_BRIDGE
+        && window.__AUTO_KILLER_STORAGE_BRIDGE__ !== true;
+      const loaderMigrationNotice = document.createElement('div');
+      loaderMigrationNotice.style.cssText = `display:${needsLoaderMigration ? 'flex' : 'none'};flex-direction:column;gap:6px;padding:8px 9px;border:1px solid #e6c96f;border-radius:9px;background:#fff8dc;color:#4d3f18;font:650 11px/1.4 system-ui,sans-serif`;
+      const loaderMigrationText = document.createElement('div');
+      loaderMigrationText.innerHTML = '<b>⚠ AUTO_KILLER 중요 업데이트</b><br>새 자동 업데이트 방식 적용을 위해 <b>2.25.3.1을 한 번 다시 설치</b>해주세요.';
+      const loaderMigrationButton = document.createElement('button');
+      loaderMigrationButton.type = 'button';
+      loaderMigrationButton.textContent = '2.25.3.1 업데이트 설치';
+      loaderMigrationButton.style.cssText = 'color-scheme:light;appearance:none;align-self:flex-start;border:1px solid #d5b952;border-radius:7px;padding:6px 9px;background:#fff;color:#4d3f18;font:800 11px/1.15 system-ui,sans-serif;cursor:pointer';
+      loaderMigrationButton.onclick = () => {
+        try {
+          const opened = window.open('https://ztcgh01.github.io/autokiller/auto_killer.user.js', '_blank');
+          if (!opened) location.href = 'https://ztcgh01.github.io/autokiller/auto_killer.user.js';
+        } catch (error) {
+          location.href = 'https://ztcgh01.github.io/autokiller/auto_killer.user.js';
+        }
+      };
+      loaderMigrationNotice.append(loaderMigrationText, loaderMigrationButton);
+
       const normalOnlyControls = [];
       const compactOnlyControls = [];
       let compactExpand = null;
@@ -1101,7 +1113,7 @@
         row.append(state);
       }
 
-      root.append(header, row, settings, status, compactHint, resizeHint, resizeEdge, resizeCorner, resizeGrip); shadow.append(isolationStyle, root); document.body.append(host);
+      root.append(header, loaderMigrationNotice, row, settings, status, compactHint, resizeHint, resizeEdge, resizeCorner, resizeGrip); shadow.append(isolationStyle, root); document.body.append(host);
       if (mode === 'zeta') setTimeout(showCompactHintOnce, 650);
       const posKey = `zk_panel_pos_v4_${mode}`;
       const minKey = `zk_panel_min_v4_${mode}`;
@@ -1624,7 +1636,7 @@
       return element.innerText || element.textContent || '';
     }
 
-    async function insertPromptCompat(prompt, text) {
+    async function insertPrompt(prompt, text) {
       prompt.focus();
 
       if ('value' in prompt && typeof prompt.value === 'string') {
@@ -1643,6 +1655,7 @@
       await sleep(100);
       if (inserted && editableText(prompt).trim()) return true;
 
+      // iOS Safari에서 execCommand가 무시되면 contenteditable 내용을 직접 구성한다.
       try {
         prompt.replaceChildren();
         String(text).split('\n').forEach(line => {
@@ -1670,7 +1683,6 @@
 
     function watchForGptResponse(job, say, state) {
       say('GPT 답변을 기다리는 중…');
-
       let finished = false;
       let confirmTimer = null;
       let fallbackTimer = null;
@@ -1688,121 +1700,108 @@
         confirmTimer = null;
       };
 
+      const finish = async finalText => {
+        let conversationUrl = '';
+        if (!job.temporaryChat) {
+          try {
+            const currentUrl = location.href.split('#')[0];
+            if (/\/c\//.test(new URL(currentUrl).pathname)) conversationUrl = currentUrl;
+          } catch (error) {}
+        }
+
+        const response = {
+          id: job.id,
+          type: job.type || 'review',
+          room: job.room,
+          text: finalText,
+          time: Date.now(),
+          conversationUrl
+        };
+
+        try { sessionStorage.removeItem(GPT_SESSION_KEY); } catch (error) {}
+
+        if (job.bookmarklet) {
+          say('제타로 전달 완료 · 제타로 이동한 뒤 같은 북마클릿을 다시 눌러주세요.');
+          state.textContent = '완료';
+          gptBusy = false;
+          setTimeout(() => {
+            location.replace(`${job.room.split('#')[0]}#${BOOKMARKLET_RESULT_HASH}=${encodeTransfer(response)}`);
+          }, 650);
+          return;
+        }
+
+        try {
+          if (conversationUrl) await sharedStorage.set(CONVERSATION_KEY, conversationUrl);
+
+          // iPhone/iPad의 같은 탭 OneClick은 GM 저장과 URL hash를 함께 사용한다.
+          if (job.oneclick && !job.newTab) {
+            try { await sharedStorage.set(RESPONSE_KEY, response); }
+            catch (error) { console.warn('[AUTO_KILLER Core] iOS GM 결과 백업 실패, hash 복귀 계속', error); }
+            try { await sharedStorage.delete(JOB_KEY); } catch (error) {}
+            say('제타로 전달 완료 · 제타로 돌아가는 중');
+            state.textContent = '완료';
+            gptBusy = false;
+            setTimeout(() => {
+              location.replace(`${response.room.split('#')[0]}#${BOOKMARKLET_RESULT_HASH}=${encodeTransfer(response)}`);
+            }, 250);
+            return;
+          }
+
+          await sharedStorage.set(RESPONSE_KEY, response);
+          await sharedStorage.delete(JOB_KEY);
+          say('제타로 전달 완료 · 원래 제타 탭으로 돌아가는 중');
+          state.textContent = '완료';
+          gptBusy = false;
+
+          setTimeout(() => {
+            const fallbackUrl = job.oneclick
+              ? `${response.room.split('#')[0]}#${BOOKMARKLET_RESULT_HASH}=${encodeTransfer(response)}`
+              : `${response.room.split('#')[0]}#zkreturn=${encodeURIComponent(job.id)}`;
+            if (job.newTab) {
+              if (window.opener && !window.opener.closed) {
+                try { window.opener.focus(); } catch (error) {}
+              }
+              window.close();
+              setTimeout(() => { if (!document.hidden) location.replace(fallbackUrl); }, 900);
+            } else {
+              location.replace(fallbackUrl);
+            }
+          }, 650);
+        } catch (error) {
+          console.error('[AUTO_KILLER Core] 응답 저장 실패', error);
+          say('응답 저장에 실패했어요. Userscripts의 웹사이트 권한을 확인해주세요.', true);
+          state.textContent = '저장 오류';
+          gptBusy = false;
+        }
+      };
+
       const checkCompletion = async () => {
         if (finished) return;
-
         const turns = assistantTurns();
         const answer = turns[turns.length - 1] || null;
         if (!answer) return;
-
         const turnId = currentTurnId(answer);
         if (!turnId || turnId === job.baselineTurnId) return;
-
         if (document.querySelector('button[data-testid="stop-button"]')) return;
-
         const copy = answer.querySelector('button[data-testid="copy-turn-action-button"]');
         if (!copy || copy.disabled) return;
-
         const firstText = assistantText(answer);
         if (!firstText || confirmTimer) return;
 
         confirmTimer = setTimeout(async () => {
           confirmTimer = null;
           if (finished) return;
-
           const latestTurns = assistantTurns();
           const latest = latestTurns[latestTurns.length - 1] || null;
           if (!latest || currentTurnId(latest) !== turnId) return;
           if (document.querySelector('button[data-testid="stop-button"]')) return;
-
           const latestCopy = latest.querySelector('button[data-testid="copy-turn-action-button"]');
           if (!latestCopy || latestCopy.disabled) return;
-
           const finalText = assistantText(latest);
           if (!finalText || finalText !== firstText) return;
-
           finished = true;
           cleanup();
-
-          try {
-            const currentUrl = location.href.split('#')[0];
-            let conversationUrl = '';
-            if (!job.temporaryChat) {
-              try {
-                if (/\/c\//.test(new URL(currentUrl).pathname)) conversationUrl = currentUrl;
-              } catch (error) {}
-            }
-
-            const response = {
-              id: job.id,
-              type: job.type || 'review',
-              room: job.room,
-              text: finalText,
-              time: Date.now(),
-              conversationUrl
-            };
-
-            try { sessionStorage.removeItem(ONECLICK_SESSION_KEY); } catch (error) {}
-
-            if (conversationUrl) {
-              try { await sharedStorage.set(CONVERSATION_KEY, conversationUrl); }
-              catch (error) { console.warn('[AUTO_KILLER Core] GPT 대화 URL 저장 실패', error); }
-            }
-
-            if (job.bookmarklet) {
-              say('제타로 전달 완료 · 제타로 이동한 뒤 같은 북마클릿을 다시 눌러주세요.');
-              state.textContent = '완료';
-              gptBusy = false;
-              setTimeout(() => {
-                location.replace(`${job.room.split('#')[0]}#${BOOKMARKLET_RESULT_HASH}=${encodeTransfer(response)}`);
-              }, 650);
-              return;
-            }
-
-            if (job.oneclick) {
-              if (job.newTab) {
-                await sharedStorage.set(RESPONSE_KEY, response);
-                state.textContent = '완료';
-                gptBusy = false;
-                try { if (window.opener && !window.opener.closed) window.opener.focus(); } catch (error) {}
-                window.close();
-                setTimeout(() => {
-                  if (!document.hidden) {
-                    location.replace(`${response.room.split('#')[0]}#${BOOKMARKLET_RESULT_HASH}=${encodeTransfer(response)}`);
-                  }
-                }, 900);
-                return;
-              }
-
-              // iPhone/iPad 같은 탭 복귀
-              try { await sharedStorage.set(RESPONSE_KEY, response); } catch (error) {}
-              state.textContent = '완료';
-              gptBusy = false;
-              await sleep(250);
-              location.replace(`${response.room.split('#')[0]}#${BOOKMARKLET_RESULT_HASH}=${encodeTransfer(response)}`);
-              return;
-            }
-
-            await sharedStorage.set(RESPONSE_KEY, response);
-            await sharedStorage.delete(JOB_KEY);
-            state.textContent = '완료';
-            gptBusy = false;
-            setTimeout(() => {
-              const fallbackUrl = `${job.room.split('#')[0]}#zkreturn=${encodeURIComponent(job.id)}`;
-              if (job.newTab) {
-                try { if (window.opener && !window.opener.closed) window.opener.focus(); } catch (error) {}
-                window.close();
-                setTimeout(() => { location.replace(fallbackUrl); }, 500);
-              } else {
-                location.replace(fallbackUrl);
-              }
-            }, 650);
-          } catch (error) {
-            console.error('[AUTO_KILLER Core] 응답 저장 실패', error);
-            say('응답 저장에 실패했어요.', true);
-            state.textContent = '저장 오류';
-            gptBusy = false;
-          }
+          await finish(finalText);
         }, 80);
       };
 
@@ -1823,9 +1822,9 @@
       timeoutTimer = setTimeout(() => {
         if (finished) return;
         cleanup();
-        gptBusy = false;
         say('답변 대기 시간이 초과됐어요.', true);
         state.textContent = '오류';
+        gptBusy = false;
       }, 360000);
 
       checkCompletion().catch(error => console.error('[AUTO_KILLER Core] 초기 완료 감지 오류', error));
@@ -1834,45 +1833,38 @@
     async function runOnGpt(job, say, state) {
       if (!job || !job.id || gptBusy || job.id === lastJobId) return;
       if (job.schema !== JOB_SCHEMA) {
-        if (!job.bookmarklet && !job.oneclick) await sharedStorage.delete(JOB_KEY);
+        if (!job.bookmarklet) await sharedStorage.delete(JOB_KEY);
+        try { sessionStorage.removeItem(GPT_SESSION_KEY); } catch (error) {}
         say('구버전 작업을 삭제했어요. 제타에서 새로 시작하세요.', true);
         state.textContent = '재시작 필요';
         return;
       }
-
       gptBusy = true;
       lastJobId = job.id;
       state.textContent = '검토 중…';
-
       if (job.stage === 'submitted') {
+        say('페이지 전환 뒤 답변 감시를 이어가는 중…');
         watchForGptResponse(job, say, state);
         return;
       }
 
-      const prompt = await waitFor('#prompt-textarea', 30000);
-      if (!prompt) {
-        say('GPT 입력창을 못 찾았어요.', true);
-        state.textContent = '오류';
-        gptBusy = false;
-        return;
-      }
+      say('GPT 입력창을 기다리는 중…');
+      const prompt = await waitFor('#prompt-textarea');
+      if (!prompt) { say('GPT 입력창을 못 찾았어요.', true); state.textContent = '오류'; gptBusy = false; return; }
 
       const baselineTurns = assistantTurns();
-      const baseline = baselineTurns[baselineTurns.length - 1] || null;
+      const baselineTurn = baselineTurns[baselineTurns.length - 1] || null;
       const submittedJob = {
         ...job,
         stage: 'submitted',
-        baselineTurnId: currentTurnId(baseline),
+        baselineTurnId: currentTurnId(baselineTurn),
         submittedAt: Date.now()
       };
+      try { sessionStorage.setItem(GPT_SESSION_KEY, JSON.stringify(submittedJob)); } catch (error) {}
+      if (!submittedJob.bookmarklet) await sharedStorage.set(JOB_KEY, submittedJob);
 
-      if (job.oneclick) {
-        try { sessionStorage.setItem(ONECLICK_SESSION_KEY, JSON.stringify(submittedJob)); } catch (error) {}
-      } else if (!job.bookmarklet) {
-        await sharedStorage.set(JOB_KEY, submittedJob);
-      }
-
-      const inserted = await insertPromptCompat(prompt, job.text);
+      say('GPT 프롬프트를 자동 입력하는 중…');
+      const inserted = await insertPrompt(prompt, job.text);
       if (!inserted) {
         say('GPT 입력창에 내용을 넣지 못했어요.', true);
         state.textContent = '오류';
@@ -1881,22 +1873,12 @@
       }
 
       const submit = await waitFor('#composer-submit-button,button[data-testid="send-button"]', 10000);
-      if (!submit) {
-        say('전송 버튼을 못 찾았어요.', true);
-        state.textContent = '오류';
-        gptBusy = false;
-        return;
-      }
-
+      if (!submit) { say('전송 버튼을 못 찾았어요.', true); state.textContent = '오류'; gptBusy = false; return; }
       let attempts = 0;
       while (submit.disabled && attempts++ < 30) await sleep(200);
-      if (submit.disabled) {
-        say('전송 버튼이 활성화되지 않았어요.', true);
-        state.textContent = '오류';
-        gptBusy = false;
-        return;
-      }
+      if (submit.disabled) { say('전송 버튼이 활성화되지 않았어요.', true); state.textContent = '오류'; gptBusy = false; return; }
 
+      say('자동 전송 · 답변을 기다리는 중…');
       submit.click();
       watchForGptResponse(submittedJob, say, state);
     }
@@ -1906,23 +1888,14 @@
       guardAgainstLegacyPanels();
       if (/zeta-ai\.io$/i.test(location.hostname)) {
         const { say, showSummaryResult } = panel('zeta');
-
-        const oneclickResult = ONECLICK_BRIDGE ? readHashTransfer(BOOKMARKLET_RESULT_HASH) : null;
-        if (oneclickResult && oneclickResult.room === location.href.split('#')[0]) {
-          history.replaceState(null, '', oneclickResult.room);
-          if (oneclickResult.type === 'summary') {
-            showSummaryResult(oneclickResult.text);
-            say('요약이 완료됐어요. 미리보기에서 복사할 수 있어요.');
-          } else {
-            await applyToZeta(oneclickResult.text, say, oneclickResult.type || 'review');
-          }
-          try { await sharedStorage.delete(RESPONSE_KEY); } catch (error) {}
-          return;
-        }
-
+        // OneClick 결과는 sharedStorage(localStorage) pending 경로 하나로만 적용한다.
+        // 이벤트와 폴링의 동시 applyToZeta() 진입을 막아 중복 적용 경쟁 상태를 제거한다.
         const bookmarkletResult = readBookmarkletTransfer(BOOKMARKLET_RESULT_PREFIX);
         if (bookmarkletResult && bookmarkletResult.room === location.href.split('#')[0]) {
           history.replaceState(null, '', bookmarkletResult.room);
+          if (ONECLICK_BRIDGE) {
+            try { await sharedStorage.delete(RESPONSE_KEY); } catch (error) {}
+          }
           if (bookmarkletResult.type === 'summary') {
             showSummaryResult(bookmarkletResult.text);
             say('요약이 완료됐어요. 미리보기에서 복사할 수 있어요.');
@@ -1960,23 +1933,19 @@
         }
       } else if (/(^|\.)chatgpt\.com$/i.test(location.hostname)) {
         const { say, state } = panel('gpt');
-
-        const oneclickJob = ONECLICK_BRIDGE ? readHashTransfer(BOOKMARKLET_JOB_HASH) : null;
         const bookmarkletJob = readBookmarkletTransfer(BOOKMARKLET_JOB_PREFIX);
-
-        if (oneclickJob || bookmarkletJob) {
-          try { history.replaceState(null, '', location.href.split('#')[0]); } catch (error) {}
+        if (bookmarkletJob) {
+          try { sessionStorage.setItem(GPT_SESSION_KEY, JSON.stringify(bookmarkletJob)); } catch (error) {}
+          history.replaceState(null, '', location.href.split('#')[0]);
         }
-
         let sessionJob = null;
-        if (ONECLICK_BRIDGE && !oneclickJob) {
-          try { sessionJob = JSON.parse(sessionStorage.getItem(ONECLICK_SESSION_KEY) || 'null'); } catch (error) {}
+        if (BOOKMARKLET_MODE || ONECLICK_BRIDGE) {
+          try { sessionJob = JSON.parse(sessionStorage.getItem(GPT_SESSION_KEY) || 'null'); } catch (error) {}
         }
-
-        const initialJob = oneclickJob || sessionJob || bookmarkletJob || await sharedStorage.get(JOB_KEY, null);
+        const initialJob = bookmarkletJob || sessionJob || await sharedStorage.get(JOB_KEY, null);
         if (initialJob) await runOnGpt(initialJob, say, state);
         else if (BOOKMARKLET_MODE) say('제타에서 작업을 시작한 뒤, GPT로 이동하면 북마클릿을 다시 눌러주세요.', true);
-        else if (!ONECLICK_BRIDGE) say('제타 작업 데이터가 없어요.', true);
+        else say('제타 작업 데이터가 없어요.', true);
       }
     }
     init().catch(error => console.error('[AUTO_KILLER Userscripts]', error));
