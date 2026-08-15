@@ -1,20 +1,19 @@
 /* AUTO_KILLER remote core
- * Baseline: 2.24.18U
- * GitHub Pages loader test
+ * Clean remote baseline: 2.25
+ * Temporary Chat: every job starts a fresh temporary chat.
  */
 (function () {
   'use strict';
   window.__AUTO_KILLER_REMOTE_CORE_LOADED__ = true;
-  window.__AUTO_KILLER_REMOTE_CORE_VERSION__ = '2.24.18U';
+  window.__AUTO_KILLER_REMOTE_CORE_VERSION__ = '2.25';
 
     'use strict';
-    const SCRIPT_VERSION = '2.24.18U';
+    const SCRIPT_VERSION = '2.25';
     const GPT_URL = 'https://chatgpt.com/g/g-6a1099bd986881918e0c582d35aafb1d-yeogbyeongkilreo';
     const PANEL_ID = 'zk-tm-unified-panel-v4';
     const JOB_KEY = 'zk_current_job_v2';
     const RESPONSE_KEY = 'zk_response_v2';
     const CONVERSATION_KEY = 'zk_gpt_conversation_v3';
-    const TEMP_CONVERSATION_KEY = 'zk_gpt_temporary_conversation_v1';
     const NEW_TAB_MODE_KEY = 'zk_new_tab_mode_v1';
     const TEMPORARY_CHAT_KEY = 'zk_temporary_chat_mode_v1';
     const JOB_SCHEMA = 4;
@@ -148,7 +147,7 @@
         const outgoingJob = { ...job, newTab: !ONECLICK_IOS, oneclick: true, temporaryChat };
         const payload = encodeTransfer(outgoingJob);
         const conversationUrl = temporaryChat
-          ? (window.__AUTO_KILLER_TEMP_CONVERSATION_URL__ || baseGptUrl)
+          ? baseGptUrl
           : (window.__AUTO_KILLER_CONVERSATION_URL__ || GPT_URL);
         const target = `${browserOnlyGptUrl(conversationUrl.split('#')[0])}#akjob=${encodeURIComponent(payload)}`;
         say(temporaryChat ? `${userscriptMessage} 임시채팅으로 여는 중…` : userscriptMessage);
@@ -157,7 +156,7 @@
           location.replace(target);
           return;
         }
-        const transferTab = window.open(target, temporaryChat ? 'AUTO_KILLER_TEMP_CHAT' : '_blank');
+        const transferTab = window.open(target, '_blank');
         if (transferTab && !transferTab.closed) {
           try { transferTab.focus(); } catch (error) {}
         } else {
